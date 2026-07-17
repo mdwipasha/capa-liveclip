@@ -13,7 +13,12 @@ export async function POST(request: Request) {
     return ok({ clip });
   } catch (error) {
     if (error instanceof ZodError) {
-      return fail("VALIDATION_ERROR", "Clip settings need a quick correction.", 422, error.flatten());
+      const firstIssue = error.issues[0];
+      const field = firstIssue?.path.join(".");
+      const message = firstIssue
+        ? `${field ? `${field}: ` : ""}${firstIssue.message}`
+        : "Clip settings need a quick correction.";
+      return fail("VALIDATION_ERROR", message, 422, error.flatten());
     }
     return fail("EXPORT_FAILED", toErrorMessage(error), 500);
   }

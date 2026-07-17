@@ -11,32 +11,87 @@ import type { ClipHistoryItem, ExportQuality, StreamMetadata } from "@/types/dom
 import { renderFilenameTemplate } from "@/utils/filename";
 import { describeYtDlpError, runYtDlpText } from "@/server/ytdlp";
 
+/**
+ * Preset per kualitas.
+ * - crf makin kecil = makin bagus (bitrate lebih gede), disesuaikan per resolusi
+ *   biar 4K ga "hemat" & 480p ga "boros" filesize-nya.
+ * - videoBitrate dipakai buat -maxrate/-bufsize, nge-cap bitrate biar hasil encode
+ *   stabil (ga ada spike bitrate yg bikin buffer/playback aneh).
+ * - fps dipaksa via -r + -fps_mode cfr. CATATAN: kalau source aslinya cuma 30fps,
+ *   maka frame bakal di-duplicate buat capai 60fps (bukan interpolasi asli),
+ *   makanya format selector di bawah prioritasin cari source yg emang udah >=60fps.
+ */
+
+type QualityPreset = {
+  height: number;
+  fps: number;
+  crf: number;
+  preset: string;
+  videoBitrate: string;
+  audioBitrate: string;
+  audioSampleRate: number;
+};
+
+const QUALITY_PRESETS: Record<Exclude<ExportQuality, "original">, QualityPreset> = {
+  "480p": { height: 480, fps: 30, crf: 23, preset: "veryfast", videoBitrate: "1500k", audioBitrate: "128k", audioSampleRate: 44100 },
+  "720p": { height: 720, fps: 60, crf: 21, preset: "veryfast", videoBitrate: "4500k", audioBitrate: "160k", audioSampleRate: 48000 },
+  "1080p": { height: 1080, fps: 60, crf: 19, preset: "fast", videoBitrate: "8000k", audioBitrate: "192k", audioSampleRate: 48000 },
+  "2k": { height: 1440, fps: 60, crf: 18, preset: "medium", videoBitrate: "16000k", audioBitrate: "224k", audioSampleRate: 48000 },
+  "4k": { height: 2160, fps: 60, crf: 17, preset: "slow", videoBitrate: "35000k", audioBitrate: "256k", audioSampleRate: 48000 }
+};
+
 function qualityArgs(quality: ExportQuality) {
+  // Original = full stream copy, ga di-reencode → kualitas source dipertahankan 1:1
   if (quality === "original") return ["-c", "copy"];
-  const height = Number.parseInt(quality, 10);
+
+  const q = QUALITY_PRESETS[quality];
+  const maxrateNum = Number.parseInt(q.videoBitrate, 10);
+
   return [
+    // scale ke height target beneran (bukan cuma "min" cap), lanczos biar upscale/downscale tetap tajam
     "-vf",
-    `scale=-2:min(${height}\\,ih)`,
+    `scale=-2:${q.height}:flags=lanczos`,
+    // paksa output frame rate konstan → hilangin variable frame rate yg suka bikin kesan "delay"/stutter
+    "-r",
+    String(q.fps),
+    "-fps_mode",
+    "cfr",
     "-c:v",
     "libx264",
     "-preset",
-    "veryfast",
+    q.preset,
     "-crf",
-    "22",
+    String(q.crf),
+    "-maxrate",
+    q.videoBitrate,
+    "-bufsize",
+    `${maxrateNum * 2}k`,
+    "-pix_fmt",
+    "yuv420p",
     "-c:a",
     "aac",
     "-b:a",
-    "160k"
+    q.audioBitrate,
+    "-ar",
+    String(q.audioSampleRate),
+    "-ac",
+    "2"
   ];
 }
 
 function formatSelectors(quality: ExportQuality) {
-  if (quality === "original") return ["best", "bestvideo*+bestaudio/best"];
+  if (quality === "original") {
+    return ["bestvideo*+bestaudio/bestvideo+bestaudio/best", "bv*+ba/b", "best"];
+  }
 
-  const height = Number.parseInt(quality, 10);
+  const { height, fps } = QUALITY_PRESETS[quality];
+
   return [
-    `best[height<=${height}]/best`,
-    `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`,
+    // prioritas: cari source yg fps-nya udah >= target, biar 60fps beneran bukan hasil duplicate frame
+    `bestvideo*[height<=${height}][fps>=${fps}]+bestaudio/bestvideo[height<=${height}][fps>=${fps}]+bestaudio`,
+    `bestvideo*[height<=${height}]+bestaudio/bestvideo[height<=${height}]+bestaudio`,
+    `bv*[height<=${height}]+ba/b[height<=${height}]`,
+    `best[height<=${height}]`,
     "best"
   ];
 }
@@ -61,6 +116,20 @@ async function resolveMediaUrls(url: string, quality: ExportQuality) {
   throw new Error(describeYtDlpError(lastError) || "Unable to resolve a playable stream format.");
 }
 
+// timeout dinamis: preset lambat (2K/4K) + clip panjang butuh alokasi waktu lebih
+function commandTimeoutMs(quality: ExportQuality, durationSeconds: number) {
+  const perSecondMs: Record<ExportQuality, number> = {
+    "480p": 1500,
+    "720p": 2000,
+    "1080p": 3000,
+    "2k": 5000,
+    "4k": 9000,
+    original: 1200
+  };
+  const baseMs = 45000; // overhead resolve stream + seek
+  return baseMs + durationSeconds * (perSecondMs[quality] ?? 3000);
+}
+
 export async function generateClipFile(input: {
   sourceUrl: string;
   startSeconds: number;
@@ -78,16 +147,24 @@ export async function generateClipFile(input: {
     binaries.ffmpeg,
     [
       "-y",
+      // genpts: regenerasi timestamp yg ilang/rusak dari stream live, sering jadi sumber desync
+      "-fflags",
+      "+genpts",
       ...sourceArgs,
       "-t",
       String(input.durationSeconds),
       ...(mediaUrls.length > 1 ? ["-map", "0:v:0", "-map", "1:a:0"] : []),
+      // normalisasi timestamp negatif & buffer muxing besar → nyegah audio "ketinggalan"/delay pas mux
+      "-avoid_negative_ts",
+      "make_zero",
+      "-max_muxing_queue_size",
+      "9999",
       ...qualityArgs(input.quality),
       "-movflags",
       "+faststart",
       input.outputPath
     ],
-    90000
+    commandTimeoutMs(input.quality, input.durationSeconds)
   );
 }
 

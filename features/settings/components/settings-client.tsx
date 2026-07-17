@@ -50,6 +50,8 @@ export function SettingsClient() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="original">Original</SelectItem>
+                  <SelectItem value="4k">4K</SelectItem>
+                  <SelectItem value="2k">2K</SelectItem>
                   <SelectItem value="1080p">1080p</SelectItem>
                   <SelectItem value="720p">720p</SelectItem>
                   <SelectItem value="480p">480p</SelectItem>

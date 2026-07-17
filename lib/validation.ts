@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const youtubeHostPattern = /(^|\.)((youtube\.com)|(youtu\.be))$/i;
 
-export const exportQualitySchema = z.enum(["original", "1080p", "720p", "480p"]);
+export const exportQualitySchema = z.enum(["original", "4k", "2k", "1080p", "720p", "480p"]);
 
 export const youtubeUrlSchema = z
   .string()

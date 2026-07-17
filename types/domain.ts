@@ -1,4 +1,4 @@
-export type ExportQuality = "original" | "1080p" | "720p" | "480p";
+export type ExportQuality = "480p" | "720p" | "1080p" | "2k" | "4k" | "original";
 
 export type LiveStatus = "live" | "upcoming" | "ended" | "unknown";
 

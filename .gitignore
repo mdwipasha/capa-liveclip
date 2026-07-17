@@ -12,3 +12,4 @@ local.db-*
 drizzle
 tmp
 vendor/yt-dlp/yt-dlp*
+youtube-cookies.txt

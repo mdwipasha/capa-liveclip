@@ -44,13 +44,23 @@ function qualityAvailable(formats: YtDlpFormat[], quality: ExportQuality) {
   if (quality === "original") return true;
   const videoFormats = formats.filter((format) => format.vcodec !== "none" && (format.height ?? 0) > 0);
   if (videoFormats.length === 0) return true;
-  const height = Number.parseInt(quality, 10);
+
+  const heightMap: Record<Exclude<ExportQuality, "original">, number> = {
+    "480p": 480,
+    "720p": 720,
+    "1080p": 1080,
+    "2k": 1440,
+    "4k": 2160
+  };
+  const height = heightMap[quality as Exclude<ExportQuality, "original">];
   return videoFormats.some((format) => (format.height ?? 0) >= height);
 }
 
 function buildFormats(formats: YtDlpFormat[]): StreamFormat[] {
   return [
     { quality: "original", label: "Original", available: true },
+    { quality: "4k", label: "4K", height: 2160, available: qualityAvailable(formats, "4k") },
+    { quality: "2k", label: "2K", height: 1440, available: qualityAvailable(formats, "2k") },
     { quality: "1080p", label: "1080p", height: 1080, available: qualityAvailable(formats, "1080p") },
     { quality: "720p", label: "720p", height: 720, available: qualityAvailable(formats, "720p") },
     { quality: "480p", label: "480p", height: 480, available: qualityAvailable(formats, "480p") }
