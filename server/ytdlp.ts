@@ -53,7 +53,16 @@ async function getCookiesFile() {
 
 async function withAuthFlags(flags: Record<string, unknown>) {
   const cookies = await getCookiesFile();
-  return cookies ? { ...flags, cookies } : flags;
+  const cacheDir = path.join(os.tmpdir(), "liveclip", "yt-dlp-cache");
+  await mkdir(cacheDir, { recursive: true });
+
+  return {
+    jsRuntimes: "node",
+    remoteComponents: "ejs:github",
+    cacheDir,
+    ...(cookies ? { cookies } : {}),
+    ...flags
+  };
 }
 
 export function getYtDlpRunner(): YtDlpRunner {

@@ -42,8 +42,10 @@ function normalizeLiveStatus(info: YtDlpInfo): LiveStatus {
 
 function qualityAvailable(formats: YtDlpFormat[], quality: ExportQuality) {
   if (quality === "original") return true;
+  const videoFormats = formats.filter((format) => format.vcodec !== "none" && (format.height ?? 0) > 0);
+  if (videoFormats.length === 0) return true;
   const height = Number.parseInt(quality, 10);
-  return formats.some((format) => (format.height ?? 0) >= height);
+  return videoFormats.some((format) => (format.height ?? 0) >= height);
 }
 
 function buildFormats(formats: YtDlpFormat[]): StreamFormat[] {
