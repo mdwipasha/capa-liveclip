@@ -9,7 +9,8 @@ import { createClip } from "@/server/repositories/history-repository";
 import { runCommand } from "@/server/process";
 import type { ClipHistoryItem, ExportQuality, StreamMetadata } from "@/types/domain";
 import { renderFilenameTemplate } from "@/utils/filename";
-import { describeYtDlpError, runYtDlpText } from "@/server/ytdlp";
+import { secondsToTimestamp } from "@/utils/time";
+import { describeYtDlpError, runYtDlpCommand } from "@/server/ytdlp";
 
 /**
  * Preset per kualitas.
@@ -96,24 +97,44 @@ function formatSelectors(quality: ExportQuality) {
   ];
 }
 
-async function resolveMediaUrls(url: string, quality: ExportQuality) {
+async function downloadClipSection(input: {
+  sourceUrl: string;
+  startSeconds: number;
+  durationSeconds: number;
+  quality: ExportQuality;
+  outputPath: string;
+}) {
   let lastError: unknown;
+  const start = secondsToTimestamp(input.startSeconds);
+  const end = secondsToTimestamp(input.startSeconds + input.durationSeconds);
 
-  for (const selector of formatSelectors(quality)) {
+  for (const selector of formatSelectors(input.quality)) {
     try {
-      const stdout = await runYtDlpText(url, {
-        f: selector,
-        g: true,
-        noPlaylist: true
-      });
-      const mediaUrls = stdout.split(/\r?\n/).filter(Boolean);
-      if (mediaUrls.length > 0) return mediaUrls;
+      await runYtDlpCommand(
+        input.sourceUrl,
+        {
+          f: selector,
+          o: input.outputPath,
+          downloadSections: `*${start}-${end}`,
+          forceKeyframesAtCuts: true,
+          mergeOutputFormat: "mp4",
+          recodeVideo: "mp4",
+          ffmpegLocation: binaries.ffmpeg,
+          noPlaylist: true,
+          noPart: true,
+          noMtime: true,
+          retries: 3,
+          fragmentRetries: 3
+        },
+        commandTimeoutMs(input.quality, input.durationSeconds)
+      );
+      return;
     } catch (error) {
       lastError = error;
     }
   }
 
-  throw new Error(describeYtDlpError(lastError) || "Unable to resolve a playable stream format.");
+  throw new Error(describeYtDlpError(lastError) || "Unable to download a playable stream segment.");
 }
 
 // timeout dinamis: preset lambat (2K/4K) + clip panjang butuh alokasi waktu lebih
@@ -137,11 +158,16 @@ export async function generateClipFile(input: {
   quality: ExportQuality;
   outputPath: string;
 }) {
-  const mediaUrls = await resolveMediaUrls(input.sourceUrl, input.quality);
-  const sourceArgs =
-    mediaUrls.length > 1
-      ? ["-ss", String(input.startSeconds), "-i", mediaUrls[0], "-ss", String(input.startSeconds), "-i", mediaUrls[1]]
-      : ["-ss", String(input.startSeconds), "-i", mediaUrls[0] ?? input.sourceUrl];
+  const tempDir = path.dirname(input.outputPath);
+  await mkdir(tempDir, { recursive: true });
+
+  if (input.quality === "original") {
+    await downloadClipSection(input);
+    return;
+  }
+
+  const sourcePath = path.join(tempDir, "source.mp4");
+  await downloadClipSection({ ...input, outputPath: sourcePath });
 
   await runCommand(
     binaries.ffmpeg,
@@ -150,10 +176,10 @@ export async function generateClipFile(input: {
       // genpts: regenerasi timestamp yg ilang/rusak dari stream live, sering jadi sumber desync
       "-fflags",
       "+genpts",
-      ...sourceArgs,
+      "-i",
+      sourcePath,
       "-t",
       String(input.durationSeconds),
-      ...(mediaUrls.length > 1 ? ["-map", "0:v:0", "-map", "1:a:0"] : []),
       // normalisasi timestamp negatif & buffer muxing besar → nyegah audio "ketinggalan"/delay pas mux
       "-avoid_negative_ts",
       "make_zero",

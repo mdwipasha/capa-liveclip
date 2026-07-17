@@ -81,6 +81,10 @@ export async function runYtDlpText(url: string, flags: Record<string, unknown>) 
   return stdout;
 }
 
+export async function runYtDlpCommand(url: string, flags: Record<string, unknown>, timeout = 120000) {
+  return getYtDlpRunner().exec(url, await withAuthFlags(flags), { timeout });
+}
+
 export function describeYtDlpError(error: unknown) {
   if (typeof error === "object" && error !== null) {
     const maybeError = error as { stderr?: string; stdout?: string; shortMessage?: string; message?: string };
