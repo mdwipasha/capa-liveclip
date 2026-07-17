@@ -61,6 +61,36 @@ async function resolveMediaUrls(url: string, quality: ExportQuality) {
   throw new Error(describeYtDlpError(lastError) || "Unable to resolve a playable stream format.");
 }
 
+export async function generateClipFile(input: {
+  sourceUrl: string;
+  startSeconds: number;
+  durationSeconds: number;
+  quality: ExportQuality;
+  outputPath: string;
+}) {
+  const mediaUrls = await resolveMediaUrls(input.sourceUrl, input.quality);
+  const sourceArgs =
+    mediaUrls.length > 1
+      ? ["-ss", String(input.startSeconds), "-i", mediaUrls[0], "-ss", String(input.startSeconds), "-i", mediaUrls[1]]
+      : ["-ss", String(input.startSeconds), "-i", mediaUrls[0] ?? input.sourceUrl];
+
+  await runCommand(
+    binaries.ffmpeg,
+    [
+      "-y",
+      ...sourceArgs,
+      "-t",
+      String(input.durationSeconds),
+      ...(mediaUrls.length > 1 ? ["-map", "0:v:0", "-map", "1:a:0"] : []),
+      ...qualityArgs(input.quality),
+      "-movflags",
+      "+faststart",
+      input.outputPath
+    ],
+    90000
+  );
+}
+
 export async function exportClip(input: {
   stream: StreamMetadata;
   startSeconds: number;
@@ -81,33 +111,17 @@ export async function exportClip(input: {
 
   await mkdir(tempDir, { recursive: true });
 
-  let mediaUrls: string[];
   try {
-    mediaUrls = await resolveMediaUrls(input.stream.url, input.quality);
+    await generateClipFile({
+      sourceUrl: input.stream.url,
+      startSeconds: input.startSeconds,
+      durationSeconds: duration,
+      quality: input.quality,
+      outputPath
+    });
   } catch (error) {
     throw new Error(describeYtDlpError(error) || "Unable to resolve livestream media URLs.");
   }
-
-  const sourceArgs =
-    mediaUrls.length > 1
-      ? ["-ss", String(input.startSeconds), "-i", mediaUrls[0], "-ss", String(input.startSeconds), "-i", mediaUrls[1]]
-      : ["-ss", String(input.startSeconds), "-i", mediaUrls[0] ?? input.stream.url];
-
-  await runCommand(
-    binaries.ffmpeg,
-    [
-      "-y",
-      ...sourceArgs,
-      "-t",
-      String(duration),
-      ...(mediaUrls.length > 1 ? ["-map", "0:v:0", "-map", "1:a:0"] : []),
-      ...qualityArgs(input.quality),
-      "-movflags",
-      "+faststart",
-      outputPath
-    ],
-    90000
-  );
 
   const clip: ClipHistoryItem = {
     id,

@@ -8,6 +8,12 @@ export async function listClips() {
   return db.select().from(clips).orderBy(desc(clips.createdAt));
 }
 
+export async function getClip(id: string) {
+  await ensureDatabase();
+  const [clip] = await db.select().from(clips).where(eq(clips.id, id));
+  return clip;
+}
+
 export async function createClip(record: NewClipRecord) {
   await ensureDatabase();
   await db.insert(clips).values(record);
