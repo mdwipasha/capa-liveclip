@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { env } from "@/lib/env";
@@ -36,10 +36,31 @@ type QualityPreset = {
 const QUALITY_PRESETS: Record<Exclude<ExportQuality, "original">, QualityPreset> = {
   "480p": { height: 480, fps: 30, crf: 23, preset: "veryfast", videoBitrate: "1500k", audioBitrate: "128k", audioSampleRate: 44100 },
   "720p": { height: 720, fps: 60, crf: 21, preset: "veryfast", videoBitrate: "4500k", audioBitrate: "160k", audioSampleRate: 48000 },
-  "1080p": { height: 1080, fps: 60, crf: 19, preset: "fast", videoBitrate: "8000k", audioBitrate: "192k", audioSampleRate: 48000 },
-  "2k": { height: 1440, fps: 60, crf: 18, preset: "medium", videoBitrate: "16000k", audioBitrate: "224k", audioSampleRate: 48000 },
-  "4k": { height: 2160, fps: 60, crf: 17, preset: "slow", videoBitrate: "35000k", audioBitrate: "256k", audioSampleRate: 48000 }
+  "1080p": { height: 1080, fps: 60, crf: 20, preset: "veryfast", videoBitrate: "8000k", audioBitrate: "192k", audioSampleRate: 48000 },
+  "2k": { height: 1440, fps: 60, crf: 19, preset: "fast", videoBitrate: "16000k", audioBitrate: "224k", audioSampleRate: 48000 },
+  "4k": { height: 2160, fps: 60, crf: 18, preset: "fast", videoBitrate: "35000k", audioBitrate: "256k", audioSampleRate: 48000 }
 };
+
+const VERCEL_SYNC_LIMITS: Record<ExportQuality, number> = {
+  original: 30,
+  "480p": 18,
+  "720p": 12,
+  "1080p": 8,
+  "2k": 5,
+  "4k": 3
+};
+
+function assertExportFitsRuntime(quality: ExportQuality, durationSeconds: number) {
+  if (!process.env.VERCEL) return;
+
+  const limit = Math.min(env.MAX_CLIP_SECONDS, VERCEL_SYNC_LIMITS[quality]);
+  if (durationSeconds > limit) {
+    throw new Error(
+      `This ${quality} export is too heavy for a synchronous Vercel Free request. ` +
+        `Use ${limit}s or less, choose a lower quality, or move exports to background/cloud storage.`
+    );
+  }
+}
 
 function qualityArgs(quality: ExportQuality) {
   // Original = full stream copy, ga di-reencode → kualitas source dipertahankan 1:1
@@ -97,13 +118,45 @@ function formatSelectors(quality: ExportQuality) {
   ];
 }
 
+function outputTemplate(outputPath: string) {
+  const parsed = path.parse(outputPath);
+  return path.join(parsed.dir, `${parsed.name}.%(ext)s`);
+}
+
+async function findDownloadedFile(outputPath: string) {
+  const parsed = path.parse(outputPath);
+  const files = await readdir(parsed.dir);
+  const candidates = await Promise.all(
+    files
+      .filter((file) => file.startsWith(`${parsed.name}.`))
+      .filter((file) => !file.endsWith(".part") && !file.endsWith(".ytdl"))
+      .map(async (file) => {
+        const filePath = path.join(parsed.dir, file);
+        const stats = await stat(filePath);
+        return { filePath, mtimeMs: stats.mtimeMs, size: stats.size };
+      })
+  );
+
+  return candidates
+    .filter((candidate) => candidate.size > 1024)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]?.filePath;
+}
+
+async function assertValidMediaFile(filePath: string) {
+  await runCommand(
+    binaries.ffprobe,
+    ["-v", "error", "-show_entries", "format=duration", "-of", "json", filePath],
+    15000
+  );
+}
+
 async function downloadClipSection(input: {
   sourceUrl: string;
   startSeconds: number;
   durationSeconds: number;
   quality: ExportQuality;
   outputPath: string;
-}) {
+}): Promise<string> {
   let lastError: unknown;
   const start = secondsToTimestamp(input.startSeconds);
   const end = secondsToTimestamp(input.startSeconds + input.durationSeconds);
@@ -114,21 +167,26 @@ async function downloadClipSection(input: {
         input.sourceUrl,
         {
           f: selector,
-          o: input.outputPath,
+          o: outputTemplate(input.outputPath),
           downloadSections: `*${start}-${end}`,
           forceKeyframesAtCuts: true,
           mergeOutputFormat: "mp4",
-          recodeVideo: "mp4",
           ffmpegLocation: binaries.ffmpeg,
           noPlaylist: true,
           noPart: true,
           noMtime: true,
           retries: 3,
-          fragmentRetries: 3
+          fragmentRetries: 3,
+          ...(input.quality === "original" ? { recodeVideo: "mp4" } : {})
         },
         commandTimeoutMs(input.quality, input.durationSeconds)
       );
-      return;
+      const downloadedFile = await findDownloadedFile(input.outputPath);
+      if (!downloadedFile) {
+        throw new Error("yt-dlp finished without producing a media file.");
+      }
+      await assertValidMediaFile(downloadedFile);
+      return downloadedFile;
     } catch (error) {
       lastError = error;
     }
@@ -148,7 +206,8 @@ function commandTimeoutMs(quality: ExportQuality, durationSeconds: number) {
     original: 1200
   };
   const baseMs = 45000; // overhead resolve stream + seek
-  return baseMs + durationSeconds * (perSecondMs[quality] ?? 3000);
+  const estimatedMs = baseMs + durationSeconds * (perSecondMs[quality] ?? 3000);
+  return process.env.VERCEL ? Math.min(estimatedMs, env.EXPORT_TIMEOUT_MS) : estimatedMs;
 }
 
 export async function generateClipFile(input: {
@@ -162,12 +221,15 @@ export async function generateClipFile(input: {
   await mkdir(tempDir, { recursive: true });
 
   if (input.quality === "original") {
-    await downloadClipSection(input);
+    const downloadedFile = await downloadClipSection(input);
+    if (downloadedFile !== input.outputPath) {
+      await copyFile(downloadedFile, input.outputPath);
+    }
     return;
   }
 
   const sourcePath = path.join(tempDir, "source.mp4");
-  await downloadClipSection({ ...input, outputPath: sourcePath });
+  const downloadedSourcePath = await downloadClipSection({ ...input, outputPath: sourcePath });
 
   await runCommand(
     binaries.ffmpeg,
@@ -177,7 +239,7 @@ export async function generateClipFile(input: {
       "-fflags",
       "+genpts",
       "-i",
-      sourcePath,
+      downloadedSourcePath,
       "-t",
       String(input.durationSeconds),
       // normalisasi timestamp negatif & buffer muxing besar → nyegah audio "ketinggalan"/delay pas mux
@@ -204,6 +266,7 @@ export async function exportClip(input: {
   if (duration > env.MAX_CLIP_SECONDS) {
     throw new Error(`Clip duration cannot exceed ${env.MAX_CLIP_SECONDS} seconds.`);
   }
+  assertExportFitsRuntime(input.quality, duration);
 
   const settings = await getSettings();
   const createdAt = new Date();

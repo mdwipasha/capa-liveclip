@@ -8,7 +8,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers
     }
   });
-  const payload = (await response.json()) as ApiResponse<T>;
+
+  const text = await response.text();
+  let payload: ApiResponse<T>;
+  try {
+    payload = JSON.parse(text) as ApiResponse<T>;
+  } catch {
+    const cleanText = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    const message = cleanText
+      ? `Server returned a non-JSON response (${response.status}): ${cleanText}`
+      : `Server returned a non-JSON response (${response.status}).`;
+    throw new Error(message.slice(0, 500));
+  }
+
   if (!payload.ok) throw new Error(payload.error.message);
   return payload.data;
 }

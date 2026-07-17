@@ -115,6 +115,7 @@ MAX_CLIP_SECONDS=120
 | `FFMPEG_PATH` | No | Optional custom FFmpeg binary path. |
 | `FFPROBE_PATH` | No | Optional custom FFprobe binary path. |
 | `MAX_CLIP_SECONDS` | No | Maximum clip length. Default is `120`. |
+| `EXPORT_TIMEOUT_MS` | No | Per-command timeout. Keep around `50000` on Vercel Free so the API can return JSON before the platform timeout. |
 
 Never commit `.env`, `youtube-cookies.txt`, local database files, or Turso auth files.
 
@@ -301,6 +302,7 @@ This means:
 - A file created during `/api/export` may not exist during `/api/download`.
 - The download route can regenerate the clip from database metadata if the temporary file is missing.
 - Download may take longer if regeneration is needed.
+- Synchronous exports must stay short. LiveClip rejects long/high-quality exports earlier on Vercel Free so the platform does not kill the request with a non-JSON error page.
 
 This is intentional for the MVP because the project avoids:
 

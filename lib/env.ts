@@ -9,7 +9,8 @@ const envSchema = z.object({
   YTDLP_COOKIES_BASE64: z.string().optional(),
   FFMPEG_PATH: z.string().optional(),
   FFPROBE_PATH: z.string().optional(),
-  MAX_CLIP_SECONDS: z.coerce.number().int().positive().default(120)
+  MAX_CLIP_SECONDS: z.coerce.number().int().positive().default(120),
+  EXPORT_TIMEOUT_MS: z.coerce.number().int().positive().default(50000)
 });
 
 export const env = envSchema.parse(process.env);
