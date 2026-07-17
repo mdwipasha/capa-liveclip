@@ -30,6 +30,37 @@ function qualityArgs(quality: ExportQuality) {
   ];
 }
 
+function formatSelectors(quality: ExportQuality) {
+  if (quality === "original") return ["best", "bestvideo*+bestaudio/best"];
+
+  const height = Number.parseInt(quality, 10);
+  return [
+    `best[height<=${height}]/best`,
+    `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`,
+    "best"
+  ];
+}
+
+async function resolveMediaUrls(url: string, quality: ExportQuality) {
+  let lastError: unknown;
+
+  for (const selector of formatSelectors(quality)) {
+    try {
+      const stdout = await runYtDlpText(url, {
+        f: selector,
+        g: true,
+        noPlaylist: true
+      });
+      const mediaUrls = stdout.split(/\r?\n/).filter(Boolean);
+      if (mediaUrls.length > 0) return mediaUrls;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(describeYtDlpError(lastError) || "Unable to resolve a playable stream format.");
+}
+
 export async function exportClip(input: {
   stream: StreamMetadata;
   startSeconds: number;
@@ -50,22 +81,13 @@ export async function exportClip(input: {
 
   await mkdir(tempDir, { recursive: true });
 
-  const formatSelector =
-    input.quality === "original"
-      ? "bestvideo+bestaudio/best"
-      : `bestvideo[height<=${Number.parseInt(input.quality, 10)}]+bestaudio/best[height<=${Number.parseInt(input.quality, 10)}]`;
-
-  let stdout: string;
+  let mediaUrls: string[];
   try {
-    stdout = await runYtDlpText(input.stream.url, {
-      f: formatSelector,
-      g: true,
-      noPlaylist: true
-    });
+    mediaUrls = await resolveMediaUrls(input.stream.url, input.quality);
   } catch (error) {
     throw new Error(describeYtDlpError(error) || "Unable to resolve livestream media URLs.");
   }
-  const mediaUrls = stdout.split(/\r?\n/).filter(Boolean);
+
   const sourceArgs =
     mediaUrls.length > 1
       ? ["-ss", String(input.startSeconds), "-i", mediaUrls[0], "-ss", String(input.startSeconds), "-i", mediaUrls[1]]

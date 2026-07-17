@@ -67,6 +67,8 @@ export async function connectStream(url: string): Promise<StreamMetadata> {
   try {
     info = await runYtDlpJson<YtDlpInfo>(url, {
       dumpSingleJson: true,
+      skipDownload: true,
+      ignoreNoFormatsError: true,
       noWarnings: true,
       noPlaylist: true
     });
