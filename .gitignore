@@ -1,0 +1,13 @@
+node_modules
+.next
+out
+dist
+*.log
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+local.db
+local.db-*
+drizzle
+tmp
