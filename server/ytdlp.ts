@@ -1,5 +1,7 @@
 import ytDlp from "yt-dlp-exec";
 import { existsSync } from "node:fs";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { env } from "@/lib/env";
 
@@ -13,6 +15,8 @@ type YtDlpRunner = typeof ytDlp & {
 type YtDlpFactory = YtDlpRunner & {
   create: (binaryPath: string) => YtDlpRunner;
 };
+
+let cookiesFilePromise: Promise<string | undefined> | undefined;
 
 function bundledBinaryPath() {
   const vendorCandidate = path.join(
@@ -28,6 +32,30 @@ function bundledBinaryPath() {
   return existsSync(candidate) ? candidate : undefined;
 }
 
+async function getCookiesFile() {
+  if (!env.YTDLP_COOKIES_BASE64) return undefined;
+  if (cookiesFilePromise) return cookiesFilePromise;
+
+  cookiesFilePromise = (async () => {
+    const cookieText = Buffer.from(env.YTDLP_COOKIES_BASE64 ?? "", "base64").toString("utf8").trim();
+    if (!cookieText) return undefined;
+
+    const dir = path.join(os.tmpdir(), "liveclip");
+    const filePath = path.join(dir, "youtube-cookies.txt");
+    await mkdir(dir, { recursive: true });
+    await writeFile(filePath, `${cookieText}\n`, { encoding: "utf8" });
+    await chmod(filePath, 0o600);
+    return filePath;
+  })();
+
+  return cookiesFilePromise;
+}
+
+async function withAuthFlags(flags: Record<string, unknown>) {
+  const cookies = await getCookiesFile();
+  return cookies ? { ...flags, cookies } : flags;
+}
+
 export function getYtDlpRunner(): YtDlpRunner {
   const factory = ytDlp as YtDlpFactory;
   const binaryPath = env.YTDLP_PATH || bundledBinaryPath();
@@ -35,12 +63,12 @@ export function getYtDlpRunner(): YtDlpRunner {
 }
 
 export async function runYtDlpJson<T>(url: string, flags: Record<string, unknown>) {
-  const { stdout } = await getYtDlpRunner().exec(url, flags, { timeout: 60000 });
+  const { stdout } = await getYtDlpRunner().exec(url, await withAuthFlags(flags), { timeout: 60000 });
   return JSON.parse(stdout) as T;
 }
 
 export async function runYtDlpText(url: string, flags: Record<string, unknown>) {
-  const { stdout } = await getYtDlpRunner().exec(url, flags, { timeout: 60000 });
+  const { stdout } = await getYtDlpRunner().exec(url, await withAuthFlags(flags), { timeout: 60000 });
   return stdout;
 }
 

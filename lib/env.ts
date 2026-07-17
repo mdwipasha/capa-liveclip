@@ -6,6 +6,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().default("file:local.db"),
   TURSO_AUTH_TOKEN: z.string().optional(),
   YTDLP_PATH: z.string().optional(),
+  YTDLP_COOKIES_BASE64: z.string().optional(),
   FFMPEG_PATH: z.string().optional(),
   FFPROBE_PATH: z.string().optional(),
   MAX_CLIP_SECONDS: z.coerce.number().int().positive().default(120)
