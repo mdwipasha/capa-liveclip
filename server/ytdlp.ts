@@ -15,6 +15,14 @@ type YtDlpFactory = YtDlpRunner & {
 };
 
 function bundledBinaryPath() {
+  const vendorCandidate = path.join(
+    process.cwd(),
+    "vendor",
+    "yt-dlp",
+    process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp"
+  );
+  if (existsSync(vendorCandidate)) return vendorCandidate;
+
   const filename = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
   const candidate = path.join(process.cwd(), "node_modules", "yt-dlp-exec", "bin", filename);
   return existsSync(candidate) ? candidate : undefined;

@@ -11,3 +11,4 @@ local.db
 local.db-*
 drizzle
 tmp
+vendor/yt-dlp/yt-dlp*
