@@ -1,0 +1,5 @@
+{
+  "name": "@liveclip/ffmpeg",
+  "private": true,
+  "type": "module"
+}

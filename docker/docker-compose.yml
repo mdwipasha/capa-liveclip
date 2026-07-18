@@ -1,0 +1,47 @@
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    environment:
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 4000
+      DATABASE_URL: file:/data/local.db
+      STORAGE_PROVIDER: local
+      LOCAL_STORAGE_DIR: /data/storage
+      MAX_CLIP_SECONDS: 120
+      EXPORT_TIMEOUT_MS: 50000
+    ports:
+      - "4000:4000"
+    volumes:
+      - liveclip-data:/data
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      DATABASE_URL: file:/data/local.db
+      QUEUE_ADAPTER: inline
+      WORKER_POLL_INTERVAL_MS: 5000
+      STORAGE_PROVIDER: local
+      LOCAL_STORAGE_DIR: /data/storage
+    volumes:
+      - liveclip-data:/data
+    depends_on:
+      - api
+
+volumes:
+  liveclip-data:

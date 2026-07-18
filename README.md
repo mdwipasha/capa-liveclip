@@ -52,16 +52,19 @@ The project is built to run on the Vercel Free Plan, with important limitations 
 ## Project Structure
 
 ```text
-app/                 Next.js pages and API routes
-components/          Shared UI and layout components
-db/                  Drizzle schema, database client, bootstrap
-features/            Feature modules for clips, history, settings
-hooks/               Client data hooks
-lib/                 Validation, env, API helpers, utilities
-server/              Server-only helpers and repositories
-services/            Business logic for streams, export, history
-types/               Shared domain types
-utils/               Time, filename, YouTube helpers
+apps/
+  web/               Next.js App Router UI, components, hooks, API client
+  api/               Standalone API server, controllers, domain modules
+  worker/            Worker entrypoint for future queue-based jobs
+packages/
+  shared/            Types, validation schemas, env parsing, DTOs, utilities
+  database/          Drizzle schema, client, bootstrap
+  ffmpeg/            FFmpeg/FFprobe binary and process helpers
+  youtube/           yt-dlp integration
+  ui/                Reserved shared UI package
+configs/             ESLint, TypeScript, Drizzle, and future shared config
+docker/              Dockerfiles and Docker Compose
+docs/                Architecture, deployment, env, and migration notes
 scripts/             Install/build helper scripts
 ```
 
@@ -93,13 +96,16 @@ Default local values:
 ```env
 APP_VERSION=0.1.0
 NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_PUBLIC_API_BASE_URL=
 DATABASE_URL=file:local.db
 TURSO_AUTH_TOKEN=
 YTDLP_PATH=
 YTDLP_COOKIES_BASE64=
+YTDLP_CONCURRENT_FRAGMENTS=4
 FFMPEG_PATH=
 FFPROBE_PATH=
 MAX_CLIP_SECONDS=120
+EXPORT_TIMEOUT_MS=50000
 ```
 
 ### Variable Reference
@@ -108,14 +114,22 @@ MAX_CLIP_SECONDS=120
 | --- | --- | --- |
 | `APP_VERSION` | No | Version shown in Settings. |
 | `NEXT_PUBLIC_APP_URL` | Recommended | Public app URL. Use your Vercel URL in production. |
+| `NEXT_PUBLIC_API_BASE_URL` | No | API origin for split deployments. Leave empty for same-origin Next API routes. |
+| `API_HOST` | No | Host for the standalone API server. Default is `0.0.0.0`. |
+| `API_PORT` | No | Port for the standalone API server. Default is `4000`. |
 | `DATABASE_URL` | Yes | Local SQLite or Turso database URL. |
 | `TURSO_AUTH_TOKEN` | Production | Turso auth token for hosted database. |
 | `YTDLP_PATH` | No | Optional custom yt-dlp binary path. Leave empty on Vercel. |
 | `YTDLP_COOKIES_BASE64` | Often needed on Vercel | Base64-encoded YouTube cookies.txt content. |
+| `YTDLP_CONCURRENT_FRAGMENTS` | No | Parallel yt-dlp fragment downloads. Default is `4`; increase carefully if your network and YouTube allow it. |
 | `FFMPEG_PATH` | No | Optional custom FFmpeg binary path. |
 | `FFPROBE_PATH` | No | Optional custom FFprobe binary path. |
 | `MAX_CLIP_SECONDS` | No | Maximum clip length. Default is `120`. |
 | `EXPORT_TIMEOUT_MS` | No | Per-command timeout. Keep around `50000` on Vercel Free so the API can return JSON before the platform timeout. |
+| `STORAGE_PROVIDER` | No | Storage adapter. `local` is implemented; `cloudinary`, `s3`, `r2`, and `supabase` are reserved. |
+| `LOCAL_STORAGE_DIR` | No | Local storage directory for future storage adapter usage. |
+| `QUEUE_ADAPTER` | No | Queue adapter for workers. Current synchronous export path still uses inline processing. |
+| `WORKER_POLL_INTERVAL_MS` | No | Worker polling interval for future queued jobs. |
 
 Never commit `.env`, `youtube-cookies.txt`, local database files, or Turso auth files.
 
@@ -281,16 +295,29 @@ Redeploy -> Clear Build Cache
 
 ## How Export Works
 
-The export flow is synchronous and Vercel-friendly:
+The current export flow is synchronous:
 
 1. API receives stream metadata, range, and quality.
 2. `yt-dlp` resolves direct media URLs.
-3. FFmpeg cuts/transcodes the selected segment.
-4. The MP4 is written to temporary storage.
-5. Clip metadata is stored in the database.
-6. Download returns the MP4.
+3. `yt-dlp` downloads the selected media range, using parallel fragments when possible.
+4. FFmpeg cuts/transcodes the selected segment.
+5. The MP4 is written to temporary storage.
+6. Clip metadata is stored in the database.
+7. Download returns the MP4.
 
 The app uses `/tmp/liveclip/...` for generated MP4 files.
+
+The dashboard shows an estimated export progress bar while the request is running. It is intentionally an estimate because the current HTTP endpoint does not stream backend progress events yet. Actual speed depends on YouTube response speed, clip duration, selected quality, transcoding cost, local CPU, disk speed, and available YouTube formats.
+
+For faster exports:
+
+- Prefer shorter ranges.
+- Use `original` when you do not need resizing or re-encoding.
+- Use `480p` or `720p` for fast sharing previews.
+- Increase `YTDLP_CONCURRENT_FRAGMENTS` carefully for local/VPS deployments.
+- Run API/worker on a machine with stronger CPU for 1080p, 2K, or 4K.
+
+For true backend progress and reliable long jobs, move export execution to the worker queue path and report progress through polling, Server-Sent Events, or WebSockets.
 
 ## Important Vercel Free Plan Limitations
 
@@ -365,14 +392,22 @@ Old behavior when `/tmp` file disappeared. Current download route regenerates th
 
 ### Export takes too long
 
-Vercel Free has strict execution limits. Lower `MAX_CLIP_SECONDS`, choose lower quality, or move export jobs to a worker/storage architecture in a future version.
+Local exports still depend on CPU, disk, and YouTube network speed. Higher quality exports take longer because FFmpeg must decode, scale, and encode the clip.
+
+Try shorter clip ranges, lower quality presets, `original` quality when acceptable, increasing `YTDLP_CONCURRENT_FRAGMENTS`, or running API/worker on a stronger VPS.
+
+Vercel Free has strict execution limits. Lower `MAX_CLIP_SECONDS`, choose lower quality, or move export jobs to a worker/storage architecture for long clips.
 
 ## Scripts
 
 ```bash
 npm run dev          # Start development server
+npm run dev:api      # Start standalone API server
+npm run dev:worker   # Start worker entrypoint
 npm run build        # Production build
 npm run start        # Start production server
+npm run start:api    # Start standalone API server
+npm run start:worker # Start worker entrypoint
 npm run lint         # Run ESLint
 npm run db:generate  # Generate Drizzle migrations
 npm run db:migrate   # Run Drizzle migrations

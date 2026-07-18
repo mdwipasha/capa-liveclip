@@ -2,15 +2,27 @@
   "name": "liveclip",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "next dev",
+    "dev": "npm run dev:web",
+    "dev:web": "next dev apps/web",
+    "dev:api": "tsx apps/api/src/server.ts",
+    "dev:worker": "tsx apps/worker/src/index.ts",
     "postinstall": "node scripts/install-ytdlp-standalone.mjs",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint .",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "build": "npm run typecheck && npm run build:web",
+    "build:web": "next build apps/web",
+    "start": "npm run start:web",
+    "start:web": "next start apps/web",
+    "start:api": "tsx apps/api/src/server.ts",
+    "start:worker": "tsx apps/worker/src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint -c configs/eslint/eslint.config.mjs apps packages configs ecosystem.config.cjs tailwind.config.ts",
+    "db:generate": "drizzle-kit generate --config configs/drizzle/drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config configs/drizzle/drizzle.config.ts",
+    "db:studio": "drizzle-kit studio --config configs/drizzle/drizzle.config.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
@@ -48,6 +60,7 @@
     "eslint-config-next": "15.5.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.20.3",
     "typescript": "^5.7.2"
   }
 }

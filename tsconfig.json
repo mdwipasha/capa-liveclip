@@ -13,11 +13,19 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "plugins": [{ "name": "next" }],
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
+      "@web/*": ["apps/web/*"],
+      "@api/*": ["apps/api/src/*"],
+      "@modules/*": ["apps/api/src/modules/*"],
+      "@worker/*": ["apps/worker/src/*"],
+      "@shared/*": ["packages/shared/src/*"],
+      "@database/*": ["packages/database/src/*"],
+      "@ffmpeg/*": ["packages/ffmpeg/src/*"],
+      "@youtube/*": ["packages/youtube/src/*"],
+      "@ui/*": ["packages/ui/src/*"]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
 }
